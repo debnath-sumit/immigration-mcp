@@ -2,10 +2,16 @@
   "name": "immigration-mcp",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20"
+  },
 
   "scripts": {
-    "dev": "tsx src/server.ts",
-    "web": "tsx src/web.ts"
+    "mcp": "tsx src/server.ts",
+    "dev": "tsx src/web.ts",
+    "web": "tsx src/web.ts",
+    "build": "tsc --noEmit"
   },
 
   "dependencies": {
@@ -19,6 +25,7 @@
   "devDependencies": {
     "@types/express": "^5.0.1",
     "@types/node": "^22.0.0",
+    "@vercel/node": "^5.1.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }

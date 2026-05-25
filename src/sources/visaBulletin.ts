@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
+import type { Element } from "domhandler";
 
 const INDEX_URL = "https://travel.state.gov/content/travel/en/legal/visa-law0/visa-bulletin.html";
 
@@ -8,7 +9,7 @@ const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 type Row = Record<string, string>;
 type Chart = { columns: string[]; rows: Row[] };
 
-function parseTable($: cheerio.CheerioAPI, el: cheerio.Element): Chart | null {
+function parseTable($: cheerio.CheerioAPI, el: Element): Chart | null {
   const $t = $(el);
   const trs = $t.find("tr").toArray();
   if (trs.length < 2) return null;
