@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Immigration Assistant</title>
+  <style>
+    body { font-family: Arial; max-width: 900px; margin: 40px auto; padding: 20px; background: #f5f7fb; }
+    h1 { color: #0b57d0; margin-bottom: 4px; }
+    .sub { color: #555; margin-bottom: 20px; }
+    .row { display: flex; gap: 8px; }
+    input { flex: 1; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; }
+    button { padding: 12px 20px; font-size: 16px; border: none; background: #0b57d0; color: white; border-radius: 8px; cursor: pointer; }
+    button:disabled { background: #8aabd9; cursor: wait; }
+    .hint { color: #777; font-size: 13px; margin-top: 8px; }
+    .card { margin-top: 24px; padding: 24px; border-radius: 12px; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .card h2 { margin-top: 0; color: #0b57d0; }
+    .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #e8f0fe; color: #0b57d0; font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .panel { padding: 16px; border: 1px solid #e3e6ea; border-radius: 8px; background: #fafbfc; }
+    .panel h3 { margin: 0 0 8px 0; font-size: 15px; color: #333; }
+    .chart { font-size: 18px; font-weight: 700; color: #0b57d0; }
+    .month { color: #555; font-size: 14px; }
+    .news-item { padding: 12px 0; border-bottom: 1px solid #eee; }
+    .news-item:last-child { border-bottom: none; }
+    .news-date { color: #777; font-size: 13px; }
+    .news-title { font-weight: 600; color: #0b57d0; text-decoration: none; }
+    .news-title:hover { text-decoration: underline; }
+    pre { white-space: pre-wrap; word-break: break-word; max-height: 500px; overflow-y: auto; background: #f5f7fb; padding: 12px; border-radius: 6px; font-size: 13px; }
+    .err { color: #c0392b; }
+    .source { color: #777; font-size: 12px; margin-top: 12px; }
+    .source a { color: #777; }
+  </style>
+</head>
+<body>
+  <h1>Immigration Assistant</h1>
+  <p class="sub">Ask about EB1/EB2/EB3 India priority dates, I-485 filing charts, or USCIS news.</p>
+
+  <div class="row">
+    <input id="question" placeholder="Try: GC update, 485 update, latest news" />
+    <button id="askBtn" onclick="ask()">Ask</button>
+  </div>
+  <div class="hint">
+    Keywords: <b>gc / priority / eb1 / eb2 / eb3 / visa bulletin</b> → priority dates ·
+    <b>485 / i-485 / aos / adjustment / chart</b> → I-485 filing chart ·
+    <b>news / memo / alert / announcement</b> → USCIS news
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    const ROUTES = [
+      { key: 'i485',  endpoint: '/api/i485-chart',           patterns: [/\b485\b/, /i-?485/, /\baos\b/, /adjustment/, /filing\s*chart/] },
+      { key: 'news',  endpoint: '/api/news',                 patterns: [/\bnews\b/, /\bmemo\b/, /\balert/, /announce/, /newsroom/] },
+      { key: 'gc',    endpoint: '/api/india-priority-dates', patterns: [/\bgc\b/, /green\s*card/, /priority/, /\beb-?[123]\b/, /visa\s*bulletin/, /bulletin/, /india/] }
+    ];
+
+    function pickRoute(q) {
+      const s = q.toLowerCase().trim();
+      if (!s) return null;
+      for (const r of ROUTES) if (r.patterns.some(p => p.test(s))) return r;
+      return null;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function renderError(msg) {
+      return `<div class="card"><div class="err">Error: ${escapeHtml(msg)}</div></div>`;
+    }
+
+    function renderIndiaSummary(label, summary) {
+      if (!summary) return `<div class="panel"><h3>${label}</h3><div class="month">Not available</div></div>`;
+      const rows = ['EB-1','EB-2','EB-3'].map(k => `
+        <tr>
+          <td style="padding:6px 12px 6px 0;color:#333;font-weight:600">${k} India</td>
+          <td style="padding:6px 0;color:#0b57d0;font-weight:700;font-variant-numeric:tabular-nums">${escapeHtml(summary[k] || '—')}</td>
+        </tr>`).join('');
+      return `<div class="panel">
+        <h3>${label}</h3>
+        <table style="border-collapse:collapse">${rows}</table>
+      </div>`;
+    }
+
+    function renderFullTable(chart) {
+      if (!chart) return '';
+      const head = chart.columns.map(c => `<th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e6ea;font-size:13px;color:#555">${escapeHtml(c)}</th>`).join('');
+      const body = chart.rows.map(r => `<tr>${chart.columns.map(c => {
+        const v = c === chart.columns[0] ? r.category : r[c];
+        return `<td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-size:13px;font-variant-numeric:tabular-nums">${escapeHtml(v || '')}</td>`;
+      }).join('')}</tr>`).join('');
+      return `<div style="overflow-x:auto;margin-top:8px"><table style="border-collapse:collapse;width:100%"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+
+    function renderGC(d) {
+      const eb = d.employmentBased;
+      return `<div class="card">
+        <div class="tag">Visa Bulletin</div>
+        <h2>${escapeHtml(d.bulletinTitle)} &mdash; India Priority Dates</h2>
+        <div class="grid">
+          ${renderIndiaSummary('Final Action Dates', eb.indiaSummary.finalAction)}
+          ${renderIndiaSummary('Dates for Filing', eb.indiaSummary.datesForFiling)}
+        </div>
+        <details style="margin-top:18px">
+          <summary style="cursor:pointer;color:#0b57d0;font-weight:600">Show full employment-based tables</summary>
+          <h3 style="margin-top:12px">Final Action Dates &mdash; Employment-Based</h3>
+          ${renderFullTable(eb.finalActionDates)}
+          <h3 style="margin-top:12px">Dates for Filing &mdash; Employment-Based</h3>
+          ${renderFullTable(eb.datesForFiling)}
+        </details>
+        <div class="source">Source: <a href="${escapeHtml(d.source)}" target="_blank">${escapeHtml(d.source)}</a></div>
+      </div>`;
+    }
+
+    function renderPanel(label, info) {
+      if (!info) return `<div class="panel"><h3>${label}</h3><div class="month">Not available</div></div>`;
+      return `<div class="panel">
+        <h3>${label}</h3>
+        <div class="chart">${escapeHtml(info.chart)}</div>
+        <div class="month">${escapeHtml(info.month)}</div>
+      </div>`;
+    }
+
+    function renderI485(d) {
+      const block = (title, m) => `<h3 style="margin-top:18px">${title}</h3>
+        <div class="grid">
+          ${renderPanel('Family-sponsored', m && m.familySponsored)}
+          ${renderPanel('Employment-based', m && m.employmentBased)}
+        </div>`;
+      return `<div class="card">
+        <div class="tag">I-485 Filing Chart</div>
+        <h2>USCIS Adjustment of Status Filing Chart</h2>
+        ${block('Current month', d.currentMonth)}
+        ${block('Next month', d.nextMonth)}
+        <div class="source">Source: <a href="${escapeHtml(d.source)}" target="_blank">${escapeHtml(d.source)}</a></div>
+      </div>`;
+    }
+
+    function renderNews(d) {
+      const items = d.items.map(n => `<div class="news-item">
+        <div class="news-date">${escapeHtml(n.date)}</div>
+        <a class="news-title" href="${escapeHtml(n.url)}" target="_blank">${escapeHtml(n.title)}</a>
+      </div>`).join('');
+      return `<div class="card">
+        <div class="tag">USCIS News</div>
+        <h2>Latest USCIS Newsroom Headlines</h2>
+        ${items || '<p>No items.</p>'}
+        <div class="source">Source: <a href="${escapeHtml(d.source)}" target="_blank">${escapeHtml(d.source)}</a></div>
+      </div>`;
+    }
+
+    const RENDERERS = { gc: renderGC, i485: renderI485, news: renderNews };
+
+    async function ask() {
+      const input = document.getElementById('question');
+      const btn = document.getElementById('askBtn');
+      const out = document.getElementById('result');
+      const q = input.value;
+      const route = pickRoute(q);
+      if (!route) {
+        out.innerHTML = `<div class="card">No matching topic. Try a question with one of the keywords listed above.</div>`;
+        return;
+      }
+      btn.disabled = true;
+      out.innerHTML = `<div class="card">Loading&hellip;</div>`;
+      try {
+        const r = await fetch(route.endpoint);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        out.innerHTML = RENDERERS[route.key](data);
+      } catch (e) {
+        out.innerHTML = renderError(e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById('question').addEventListener('keydown', e => {
+      if (e.key === 'Enter') ask();
+    });
+  </script>
+</body>
+</html>
